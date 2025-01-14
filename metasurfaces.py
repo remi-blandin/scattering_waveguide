@@ -34,12 +34,13 @@ alphas_side = +1j * 1.
 nb_opt_metal = 12       # Metal scatterers to optimize
 nb_opt_dielec = 10      # Teflon scatterers to optimize
 nb_scat = nb_opt_metal + nb_opt_dielec  # Number of dipoles to be optimized (the nb_opt at the left part)
-n_side_scat = 15
 n_bars = 3
+n_side_scat = 8
+n_center_scat = 3
 
 # radius of the different scatterers types
-rad_scat = 0.0021
-rad_sides = 0.001
+rad_teflon = 0.0021
+rad_scat = 0.001
 rad_bars = 0.0031
 
 # Generate the complex medium through which transmission is optimized
@@ -52,71 +53,35 @@ parameters['alphas0'] = torch.full((nb_scat,), alphas_teflon, dtype=torch.comple
 # then the indexes corresponding to metal are changed to the metal property
 parameters['alphas0'][index_metal] = torch.full((nb_opt_metal,), alphas_metal, dtype=torch.complex64)
 # the location of the scatterers is randomly initialized
-parameters['scatRad'] = torch.full((nb_scat,), rad_scat)
-
-# parameters, scat_pos = fct.position_scatterer_random(parameters)  # Initial disorder
+parameters['scatRad'] = torch.full((nb_scat,), rad_teflon)
+# put scatterers at random positions
 parameters, scat_pos = fct.position_scatterer_random(parameters, x_min=parameters['H_guide']/2)  # Initial disorder
 
-# Generate the metal grid at the entrance
+# Generate the arrays of scatterers placed before the complex medium
 #############################################################################
 
-# generate x coordinates
-x_bars = torch.full((n_bars, ), rad_scat)
-parameters['posx'] = torch.cat((parameters['posx'], x_bars))
-
-# generate y coordinates
-y_bars = torch.range(1, n_bars) * parameters['W_guide'] / (n_bars + 1)
-parameters['posy'] = torch.cat((parameters['posy'], y_bars))
-
-# generate polarizations
-parameters['alphas0'] = torch.cat((parameters['alphas0'], \
-                                   torch.full((n_bars, ), alphas_metal)))
-
-# generate scatterers radius
-parameters['scatRad'] = torch.cat((parameters['scatRad'], \
-                                   torch.full((n_bars,), rad_bars)))
+# Generate the metal grid at the entrance
+fct.generate_scatterers_line(parameters, 0, parameters['W_guide'], \
+                             rad_bars, False, \
+                                 n_bars, alphas_metal, rad_bars)
 
 # Generate the scatterers at the bottom of the first half of the waveguide
-#############################################################################
-
-# generate x coordinates
-x_side_scat = torch.range(1, n_side_scat) * parameters['H_guide'] / (n_side_scat + 1) / 2
-parameters['posx'] = torch.cat((parameters['posx'], x_side_scat))
-
-# generate y coordinates
-y_side_scat = torch.full((n_side_scat, ), rad_scat)
-parameters['posy'] = torch.cat((parameters['posy'], y_side_scat))
-
-# generate polarizations
-parameters['alphas0'] = torch.cat((parameters['alphas0'], \
-                                   torch.full((n_side_scat, ), alphas_side)))
-    
-# generate scatterers radius
-parameters['scatRad'] = torch.cat((parameters['scatRad'], \
-                                   torch.full((n_side_scat,), rad_sides)))
+fct.generate_scatterers_line(parameters, 0, parameters['H_guide'] / 2., \
+                             rad_scat, True, \
+                                 n_side_scat, alphas_side, rad_scat)
     
 # Generate the scatterers at the top of the first half of the waveguide
-#############################################################################
+fct.generate_scatterers_line(parameters, 0, parameters['H_guide'] / 2., \
+                             parameters['W_guide'] - rad_scat, True, \
+                                 n_side_scat, alphas_side, rad_scat)
 
-# generate x coordinates
-x_side_scat = torch.range(1, n_side_scat) * parameters['H_guide'] / (n_side_scat + 1) / 2
-parameters['posx'] = torch.cat((parameters['posx'], x_side_scat))
-
-# generate y coordinates
-y_side_scat = torch.full((n_side_scat, ), parameters['W_guide'] - rad_scat)
-parameters['posy'] = torch.cat((parameters['posy'], y_side_scat))
-
-# generate polarizations
-parameters['alphas0'] = torch.cat((parameters['alphas0'], \
-                                   torch.full((n_side_scat, ), alphas_side)))
-    
-# generate scatterers radius
-parameters['scatRad'] = torch.cat((parameters['scatRad'], \
-                                   torch.full((n_side_scat,), rad_sides)))
-    
-parameters['nb_scat'] = len(parameters['alphas0'])
+# Generate the scatterers line in the middle of the waveguide
+fct.generate_scatterers_line(parameters, 0, parameters['W_guide'], \
+                             0.25 * parameters['H_guide'], False, \
+                                 n_center_scat, alphas_side, rad_scat)
     
 fct.plot_scatterers_config(parameters)
+
 
 #%% Optimize scatterers polarizability to maximize transmission
 
@@ -127,7 +92,7 @@ is_dielectric = parameters['alphas0'] == alphas_side
 idx_diel_scat = is_dielectric.nonzero()
 
 # to store the progress of the optimisation later
-nb_repeat = 5
+nb_repeat = 2
 nb_diel_scat = len(idx_diel_scat)
 record = np.zeros(nb_repeat * nb_diel_scat)
 

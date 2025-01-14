@@ -4,6 +4,40 @@ import matplotlib.pyplot as plt
 from matplotlib import colors as mcolors
 from scipy.constants import c  # Speed of light in vacuum
 
+#%% position scatterers on a line
+
+def generate_scatterers_line(parameters, coord_start, coord_end, const_coord, aligned, \
+                             nb_scat, polarization, radius):
+    
+    # generate the coordinate whih remains constant
+    const_coord = torch.full((nb_scat, ), const_coord)
+    
+    # generate the varying coordinate
+    coord = coord_start + torch.range(1, nb_scat) * (coord_end - coord_start) / (nb_scat + 1)
+    
+    # put the coordinates in the parameters according to the configuration: 
+    #   - aligned with the waveguide axis
+    #   - or perpendicular to the waveguide axis
+    if aligned:
+        parameters['posx'] = torch.cat((parameters['posx'], coord))
+        parameters['posy'] = torch.cat((parameters['posy'], const_coord))
+    else: # perpendicular
+        parameters['posx'] = torch.cat((parameters['posx'], const_coord))
+        parameters['posy'] = torch.cat((parameters['posy'], coord))
+        
+    # put the polarization of the scatterers in the parameters
+    parameters['alphas0'] = torch.cat((parameters['alphas0'], \
+                                       torch.full((nb_scat, ), polarization)))
+        
+    # put the radius of the scatterers in the parameters
+    parameters['scatRad'] = torch.cat((parameters['scatRad'], \
+                                       torch.full((nb_scat,), radius)))
+        
+    # update the number of scatterers
+    parameters['nb_scat'] = len(parameters['alphas0'])
+        
+
+
 #%% randomly attribute location to the scatterers
 
 def position_scatterer_random(parameters, x_min=0):
@@ -135,8 +169,8 @@ def calculate_loss(parameters, freq):
     Tx = S[n_port:2*n_port, :n_port]
     U, lambda1, v = torch.linalg.svd(Tx)
     R = 1-torch.mean(torch.sum(torch.abs(Tx)**2,axis=1))
-    # loss = (1-lambda1[parameters['Nport']-1] )+R*(1-R)
-    loss = R
+    loss = (1-lambda1[parameters['Nport']-1] )+R*(1-R)
+    # loss = R
     loss.requires_grad_()
     
     return loss, S, R
