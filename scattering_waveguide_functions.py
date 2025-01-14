@@ -225,7 +225,7 @@ def scattering_matrix(parameters, freq):
                 R = parameters['scatRad'][ii]  # Radius of scatterers
                 dipole_pos[n_s * ii:n_s * (ii + 1), 0] = parameters['posy'][ii] + R * torch.cos(theta[:-1])
                 dipole_pos[n_s * ii:n_s * (ii + 1), 1] = parameters['posx'][ii] + R * torch.sin(theta[:-1])
-            alphas0 = np.repeat(alphas0,n_s) # also duplicate polarizabilities
+            alphas0 = np.repeat(alphas0.detach(),n_s) # also duplicate polarizabilities
 
     # waveguide modes parameters
     nu_c = c / (2 * W)
@@ -310,7 +310,7 @@ def plot_scatterers(parameters, ax):
     
     ax.set_aspect('equal')
     
-    scat_color = np.round(np.imag(parameters['alphas0']) * 10.)
+    scat_color = np.round(np.imag(parameters['alphas0'].detach()) * 10.)
     scat_color = scat_color - min(scat_color)
     scat_color =  scat_color/max(scat_color)
     

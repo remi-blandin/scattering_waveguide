@@ -14,7 +14,7 @@ parameters = {
     'N_mode_use': 23,                                       # Total number of modes taken into account in the calculation of the Green function
     'n_s': torch.tensor(8),                                 # number of dipoles to model one cylinder
     'method': 'random',                                     # Optimization method (random in this case)
-    'max_nb_iterations':1000,                               # max number of optimization iterations
+    'max_nb_iterations':100,                               # max number of optimization iterations
     'learning_rate': 0.001,                                 # learning rate for Adam optimization algorithm
     'maximal_loss': 0.01,                                   # optimization stops when loss is lower 
     }
@@ -39,7 +39,7 @@ nb_scat = nb_opt_metal + nb_opt_dielec  # Number of dipoles to be optimized (the
 n_optim = 10
 
 # radius of the different scatterers types
-radius = 0.0031
+radius = 0.0021
 
 # Generate the complex medium through which transmission is optimized
 #############################################################################
@@ -80,35 +80,64 @@ is_dielectric = parameters['alphas0'] == alphas_optim
 idx_diel_scat = is_dielectric.nonzero()
 
 # to store the progress of the optimisation later
-nb_repeat = 2
+# nb_repeat = 2
 nb_diel_scat = len(idx_diel_scat)
-record = np.zeros(nb_repeat * nb_diel_scat)
+record = np.zeros(parameters['max_nb_iterations'])
 
 loss,S,R = fct.calculate_loss(parameters, freq)
 loss_ref = loss
 print(f'Loss = {loss.item()} Reflection = {R.item()}')
 fct.plot_optimization_progress(parameters, record, S.detach())
 
-for ii in range(0,nb_repeat):
-    for it, idx in enumerate(idx_diel_scat):
-        # switch the polarizability 
-        parameters['alphas0'][idx] = -parameters['alphas0'][idx]
-        
-        loss,S,R = fct.calculate_loss(parameters, freq)
-        print(f'Iteration {it}: Loss = {loss.item()} Reflection = {R.item()}')
-        record[it + ii*nb_diel_scat] = loss
-        
-        fct.plot_optimization_progress(parameters, record[:it + 1 + ii*nb_diel_scat], S.detach())
-        
-        if loss > loss_ref:
-            # switch back to the original configuration
-            parameters['alphas0'][idx] = -parameters['alphas0'][idx]
-        else:
-            loss_ref = loss
-            
-    # fct.plot_optimization_progress(parameters, record[:it + ii*nb_diel_scat], S.detach())
+# pol_optim = np.imag(parameters['alphas0'][idx_diel_scat])
+pol_optim = torch.full((nb_diel_scat, 1), 1., dtype=torch.float32, requires_grad=True)
+# pol_optim.requires_grad_(True)
+
+optimizer = torch.optim.Adam([pol_optim], betas=(0.99, 0.999), \
+                             lr = parameters['learning_rate'], \
+                                 amsgrad=True, eps=1e-8)
+
+iteration = 0
+while iteration < parameters['max_nb_iterations']  and loss.item() > parameters['maximal_loss'] :
     
-# Show best config
-loss,S,R = fct.calculate_loss(parameters, freq)
-print(f'Loss = {loss.item()} Reflection = {R.item()}')
-fct.plot_optimization_progress(parameters, record, S.detach())
+    optimizer.zero_grad(set_to_none = True)
+    
+    # update scatterers polarizability in parameters
+    parameters['alphas0'][idx_diel_scat] = 1j * pol_optim
+    
+    loss,S,R = fct.calculate_loss(parameters, freq)
+    record[iteration] = loss
+    loss.backward()     # Backpropagate the loss
+    optimizer.step()    # Step the optimizer
+    
+    # with torch.no_grad():
+    #     pol_optim = pol_optim + 0.001 * (torch.rand(len(idx_diel_scat),1) - 0.5)
+    
+    iteration = iteration + 1
+    
+    print(f'Iteration {iteration}: Loss = {loss.item()} Reflection = {R.item()}')
+    fct.plot_optimization_progress(parameters, record[:iteration], S.detach())
+    
+# for ii in range(0,nb_repeat):
+#     for it, idx in enumerate(idx_diel_scat):
+#         # switch the polarizability 
+#         parameters['alphas0'][idx] = -parameters['alphas0'][idx]
+        
+#         loss,S,R = fct.calculate_loss(parameters, freq)
+#         print(f'Iteration {it}: Loss = {loss.item()} Reflection = {R.item()}')
+#         record[it + ii*nb_diel_scat] = loss
+        
+#         fct.plot_optimization_progress(parameters, record[:it + 1 + ii*nb_diel_scat], S.detach())
+        
+#         if loss > loss_ref:
+#             # switch back to the original configuration
+#             parameters['alphas0'][idx] = -parameters['alphas0'][idx]
+#         else:
+#             loss_ref = loss
+            
+#     # fct.plot_optimization_progress(parameters, record[:it + ii*nb_diel_scat], S.detach())
+    
+# # Show best config
+# loss,S,R = fct.calculate_loss(parameters, freq)
+# print(f'Loss = {loss.item()} Reflection = {R.item()}')
+# fct.plot_optimization_progress(parameters, record, S.detach())
