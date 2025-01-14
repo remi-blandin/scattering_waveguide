@@ -40,9 +40,18 @@ def generate_scatterers_line(parameters, coord_start, coord_end, const_coord, al
 
 #%% randomly attribute location to the scatterers
 
-def position_scatterer_random(parameters, x_min=0):
+def position_scatterer_random(parameters, x_min=0, x_max=0, nb_scat=0, show_progress=False):
 
-    nb_scat = len(parameters['alphas0'])
+    if nb_scat == 0:
+        nb_scat = len(parameters['alphas0'])
+        idx_start = 0
+        parameters['posx'] = torch.empty(nb_scat)
+        parameters['posy'] = torch.empty(nb_scat)
+    else:
+        idx_start = len(parameters['posx'])
+        parameters['posx'] = torch.cat((parameters['posx'], torch.empty(nb_scat)))
+        parameters['posy'] = torch.cat((parameters['posy'], torch.empty(nb_scat)))
+        
     max_scatterers_rad = parameters['scatRad'][0].item() * 4
     
     dmin_wall = parameters['spacing_min']   # minimal distance with the walls
@@ -50,7 +59,11 @@ def position_scatterer_random(parameters, x_min=0):
     # range in which the coordinates are generated
     x_min = max(x_min, dmin_wall)
     x_min = min(x_min, parameters['H_guide'] - dmin_wall)
-    x_max = parameters['H_guide'] - dmin_wall
+    if x_max == 0:
+        x_max = parameters['H_guide'] - dmin_wall
+    else:
+        x_max = max(x_max, dmin_wall)
+        x_max = min(x_max, parameters['H_guide'] - dmin_wall)
     y_min = dmin_wall
     y_max = parameters['W_guide'] - dmin_wall
 
@@ -58,20 +71,37 @@ def position_scatterer_random(parameters, x_min=0):
     while scatterers_pos_wrong:
 
         # randomly generate scaterrers position
-        parameters['posx'] = x_min + (x_max - x_min) * np.random.rand(nb_scat)
-        parameters['posy'] = y_min + (y_max - y_min) * np.random.rand(nb_scat)
+        parameters['posx'][idx_start : idx_start + nb_scat] = \
+                                       x_min + (x_max - x_min) * np.random.rand(nb_scat)
+        parameters['posy'][idx_start : idx_start + nb_scat] = \
+                                       y_min + (y_max - y_min) * np.random.rand(nb_scat)
 
         ensure_no_overlap(parameters, max_scatterers_rad)
 
         scatterers_pos_wrong = condition_scatterers(parameters)
+        
+        if show_progress:
+            plot_scatterers_config(parameters)
 
-    sorted_indices = np.argsort(parameters['posx'])
-    parameters['posx'] = parameters['posx'][sorted_indices]
-    parameters['posy'] = parameters['posy'][sorted_indices]
+    # sort the coordinates by increasing x
+    posx = parameters['posx'][idx_start : idx_start + nb_scat] 
+    posy = parameters['posy'][idx_start : idx_start + nb_scat] 
+    sorted_indices = np.argsort(posx)
+    posx = posx[sorted_indices]
+    posy = posy[sorted_indices]
+    parameters['posx'][idx_start : idx_start + nb_scat] = posx
+    parameters['posy'][idx_start : idx_start + nb_scat] = posy
+    
+    # sorted_indices = np.argsort(parameters['posx'])
+    # parameters['posx'] = parameters['posx'][sorted_indices]
+    # parameters['posy'] = parameters['posy'][sorted_indices]
 
     dippos = torch.zeros((nb_scat, 2))
     dippos[:nb_scat, 0] = parameters['posy'][:nb_scat].clone().detach() # Random position of the dipoles in y
     dippos[:nb_scat, 1] = parameters['posx'][:nb_scat].clone().detach() # Random position of the dipoles in x
+    
+    # update the number of scatterers
+    parameters['nb_scat'] = len(parameters['alphas0'])
 
     return parameters, dippos
     
@@ -100,14 +130,12 @@ def ensure_no_overlap(parameters,radius):
 
 def condition_scatterers(parameters):
     # Extract parameters
-    # posx = torch.tensor(parameters['posx']).clone()
     posx = parameters['posx'].clone().detach()
-    # posy = torch.tensor(parameters['posy']).clone()
     posy = parameters['posy'].clone().detach()
-    # scatRad = torch.tensor(parameters['scatRad'])
     scatRad = parameters['scatRad'].clone().detach()
     W_guide = parameters['W_guide']
     H_guide = parameters['H_guide']
+    n_scat = len(posx)
 
     dmin = 0.0001
     dmin_wall = parameters['spacing_min']
@@ -134,14 +162,13 @@ def condition_scatterers(parameters):
         a.append((posx > H_guide - rad - dmin_wall).sum().item())
 
     # Distance between scatterers
-    n_scat = len(posx)
     d = torch.zeros((n_scat, n_scat))
 
     for ii in range(n_scat):
         d[:, ii] = torch.sqrt((posx - posx[ii]) ** 2 + (posy - posy[ii]) ** 2)
 
-    for ii in range(n_scat - 1):
-        for jj in range(ii + 1, n_scat):
+    for ii in range(n_scat - 2):
+        for jj in range(ii + 1, n_scat - 1):
             if d[ii, jj] < scatRad[ii] + scatRad[jj] + dmin:
                 a.append(1)
 
@@ -293,8 +320,20 @@ def plot_scatterers(parameters, ax):
                           parameters['scatRad'][s], color=mcolors.to_rgb((scat_color[s].item(), 0, 0)))
         ax.add_patch(circ)
         
-    ax.set_xlim((0, parameters['H_guide']))
-    ax.set_ylim((0, parameters['W_guide']))
+    # draw the waveguide contours 
+    rect = plt.Rectangle((0., 0.), parameters['H_guide'], parameters['W_guide'],\
+                             linewidth=1, edgecolor='black', facecolor='none')
+    ax.add_patch(rect)
+        
+    x_min = min(0., min(parameters['posx']))
+    x_max = max(parameters['H_guide'], max(parameters['posx']))
+    ax.set_xlim((x_min, x_max))
+    
+    y_min = min(0., min(parameters['posy']))
+    y_max = max(parameters['W_guide'], max(parameters['posy']))
+    ax.set_ylim((y_min, y_max))
+    
+    # print(f'x_min = {x_min} x_max = {x_max} y_min = {y_min} y_max = {y_max}')
     
 def plot_scatterers_config(parameters):
     fig = plt.figure()
