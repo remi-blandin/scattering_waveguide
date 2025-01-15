@@ -2,6 +2,7 @@ import torch
 import numpy as np
 from scipy.constants import c  # Speed of light in vacuum
 import scattering_waveguide_functions as fct
+import time
 
 parameters = {
     'W_guide': torch.tensor(0.1),                           # Waveguide width
@@ -15,8 +16,9 @@ parameters = {
     'n_s': torch.tensor(8),                                 # number of dipoles to model one cylinder
     'method': 'random',                                     # Optimization method (random in this case)
     'max_nb_iterations':1000,                               # max number of optimization iterations
-    'learning_rate': 0.001,                                 # learning rate for Adam optimization algorithm
+    'learning_rate': 0.01,                                 # learning rate for Adam optimization algorithm
     'maximal_loss': 0.01,                                   # optimization stops when loss is lower 
+    'use_precomputed_values': False,                         # if set to true, precomputed data are used to accelerate computations
     }
     
 # compute the number of propagating modes
@@ -28,7 +30,7 @@ print(f"Number of propagating modes: {parameters['Nport']}")
 # polarizabilities
 alphas_metal = -1j * 6
 alphas_teflon = +1j * 0.05
-alphas_optim = +1j * 5.
+alphas_optim = +1j * 2.
 
 #%% generate scatterers polarization and position
 
@@ -36,7 +38,7 @@ alphas_optim = +1j * 5.
 nb_opt_metal = 12       # Metal scatterers to optimize
 nb_opt_dielec = 10      # Teflon scatterers to optimize
 nb_scat = nb_opt_metal + nb_opt_dielec  # Number of dipoles to be optimized (the nb_opt at the left part)
-n_optim = 30
+n_optim = 50
 
 # radius of the different scatterers types
 radius = 0.0021
@@ -54,13 +56,15 @@ parameters['alphas0'][index_metal] = torch.full((nb_opt_metal,), alphas_metal, d
 parameters['scatRad'] = torch.full((nb_scat,), radius)
 # put scatterers at random positions
 parameters, scat_pos = fct.position_scatterer_random(parameters, \
-                        x_min=parameters['H_guide']/2, show_progress=True)
+                        x_min=parameters['H_guide']/2, show_progress=False)
 
 # Generate the complex medium whose polarizability is optimized
 #############################################################################
 
 parameters['alphas0'] = torch.cat((parameters['alphas0'], \
                                    torch.full((n_optim, ), alphas_optim)))
+# parameters['alphas0'] = torch.cat((parameters['alphas0'], \
+                                   # ((torch.rand((n_optim, )) - 0.5)) * alphas_optim))
     
 parameters['scatRad'] = torch.cat((parameters['scatRad'], \
                                        torch.full((n_optim,), radius)))
@@ -75,12 +79,10 @@ fct.plot_scatterers_config(parameters)
 
 freq = torch.tensor(7.0e9,dtype=torch.cfloat)
 
-# get indexes of dielectric scatterers
-is_dielectric = parameters['alphas0'] == alphas_optim
-idx_diel_scat = is_dielectric.nonzero()
+# indexes of dielectric scatterers
+idx_diel_scat = torch.arange(nb_scat, nb_scat + n_optim)
 
 # to store the progress of the optimisation later
-# nb_repeat = 2
 nb_diel_scat = len(idx_diel_scat)
 record = np.zeros(parameters['max_nb_iterations'])
 
@@ -95,8 +97,10 @@ pol_optim.requires_grad_(True)
 optimizer = torch.optim.Adam([pol_optim], betas=(0.9, 0.999), \
                              lr = parameters['learning_rate'], \
                                  amsgrad=True, eps=1e-8)
-
+    
+tot_time_loss = 0
 iteration = 0
+
 while iteration < parameters['max_nb_iterations']  and loss.item() > parameters['maximal_loss'] :
     
     optimizer.zero_grad(set_to_none = True)
@@ -104,7 +108,12 @@ while iteration < parameters['max_nb_iterations']  and loss.item() > parameters[
     # update scatterers polarizability in parameters
     parameters['alphas0'][idx_diel_scat] = 1j * pol_optim
     
+    start = time.time()
     loss,S,R = fct.calculate_loss(parameters, freq)
+    end = time.time()
+    time_loss = (end-start) * 10**3
+    tot_time_loss = tot_time_loss + time_loss
+    
     record[iteration] = loss
     loss.backward()     # Backpropagate the loss
     optimizer.step()    # Step the optimizer
@@ -116,4 +125,6 @@ while iteration < parameters['max_nb_iterations']  and loss.item() > parameters[
     if iteration % 20 == 0:
         print(f'Iteration {iteration}: Loss = {loss.item()} Reflection = {R.item()}')
         fct.plot_optimization_progress(parameters, record[:iteration], S.detach())
+        print("Average time of execution loss function:",\
+         tot_time_loss / (iteration + 1) , "ms")
     

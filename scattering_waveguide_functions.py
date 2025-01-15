@@ -52,7 +52,7 @@ def position_scatterer_random(parameters, x_min=0, x_max=0, nb_scat=0, show_prog
         parameters['posx'] = torch.cat((parameters['posx'], torch.empty(nb_scat)))
         parameters['posy'] = torch.cat((parameters['posy'], torch.empty(nb_scat)))
         
-    max_scatterers_rad = parameters['scatRad'][0].item() * 4
+    max_scatterers_rad = parameters['scatRad'][0].item() * 2
     
     dmin_wall = parameters['spacing_min']   # minimal distance with the walls
     
@@ -191,83 +191,125 @@ def distance_dippos(dippos):
 def calculate_loss(parameters, freq):
     
     n_port = parameters['Nport']
-        
+    
     S = scattering_matrix(parameters, freq) 
     Tx = S[n_port:2*n_port, :n_port]
     U, lambda1, v = torch.linalg.svd(Tx)
     R = 1-torch.mean(torch.sum(torch.abs(Tx)**2,axis=1))
     # loss = (1-lambda1[parameters['Nport']-1] )+R*(1-R)
     loss = R
-    # loss.requires_grad_()
     
     return loss, S, R
 
 #%% Compute the scattering matrix
 
 def scattering_matrix(parameters, freq):
-
-    N = parameters['Nport'].clone()
-    W = parameters['W_guide'].clone()
-    L = parameters['H_guide'].clone()
-    alphas0 = parameters['alphas0']
+    
     nb_scat = parameters['nb_scat']
+    alphas0 = parameters['alphas0']
+    N = parameters['Nport'].clone()
+    n_s = parameters.get('n_s', 1) # number of dipoles to model one scatterer
+    
+    # Computation if data from previous computation are saved
+    ###########################################################################
+    
+    if parameters['use_precomputed_values'] and 'S0' in parameters:
+        
+        S_scat = 0
+        if nb_scat > 0:
+            
+            # get the saved parameters
+            G = parameters['G']
+            S0 = parameters['S0']
+            dipole_pos = parameters['dipole_pos']
 
-    if nb_scat > 0:
-        # get the number of dipoles to model one (metalic ?) scatterer
-        n_s = parameters.get('n_s', 1)
-
-        # if the scatterers are represented by multiple dipoles, the dipoles
-        # corresponding to each scatterer are generated
-        if n_s > 1:
-            theta = torch.linspace(0, 2 * np.pi, n_s + 1)
-            dipole_pos = torch.zeros((n_s * nb_scat, 2))
-            for ii in range(nb_scat):
-                R = parameters['scatRad'][ii]  # Radius of scatterers
-                dipole_pos[n_s * ii:n_s * (ii + 1), 0] = parameters['posy'][ii] + R * torch.cos(theta[:-1])
-                dipole_pos[n_s * ii:n_s * (ii + 1), 1] = parameters['posx'][ii] + R * torch.sin(theta[:-1])
-            # alphas0 = np.repeat(alphas0,n_s)
-            alphas0 = alphas0.repeat(n_s)  # also duplicate polarizabilities
-
-    # waveguide modes parameters
-    nu_c = c / (2 * W)
-    kn = (2 * np.pi / c) * torch.sqrt(freq**2 - (torch.arange(1, 301) * nu_c)**2) 
-
-    # Calculate the green function from the input to the dipoles
-    G2 = torch.sqrt(2 / W) * torch.sin(dipole_pos[:, 0].unsqueeze(1) * torch.arange(1, N + 1) * np.pi / W) * \
-         torch.exp(-1j * dipole_pos[:, 1].unsqueeze(1) * torch.conj(kn[:N]))
-    G2 = -torch.pow(-1.0, torch.arange(1, N + 1)) * G2
-    G2 = (1 / torch.sqrt(kn[:N])) * G2
-
-    # calculate the Green functions from the dipoles to the output 
-    G1 = torch.sqrt(2 / W) * torch.sin(dipole_pos[:, 0].unsqueeze(1) * torch.arange(1, N + 1) * np.pi / W) * \
-         torch.exp(-1j * torch.abs(L - dipole_pos[:, 1].unsqueeze(1)) * torch.conj(kn[:N]))
-    G1 = -torch.pow(-1.0, torch.arange(1, N + 1)) * G1
-    G1 = (1 / torch.sqrt(kn[:N])) * G1
-
-    # concatenate the Green functions of the scatterers
-    G = torch.cat((G2, G1), dim=1)
-
-    # compute the scattering matrix of the scatterers
-    S_scat = 0
-    if nb_scat > 0:
-        mat = torch.diag(1 / alphas0)
-        green = Green_function(dipole_pos, dipole_pos, parameters, freq)
-        mat = mat - green
-        W1 = torch.pinverse(mat)
-        S_scat = torch.mm(torch.mm(G.t(), W1), G)
-
-    # Compute the scattering matrix of the waveguide without scatterers
-    S0 = torch.zeros((2 * N, 2 * N), dtype=torch.complex128)
-    G0 = torch.exp(-1j * L * torch.conj(kn[:N]))
-    t0 = torch.diag(G0)
-    S0[:N, N:2 * N] = t0
-    S0[N:2 * N, :N] = t0
-    S0 = -S0
-
-    # Compute the total scattering matrix
-    S = S0 + S_scat
-    S[:N, :N] = -S[:N, :N]  
-    S[N:, N:] = -S[N:, N:]  
+            # duplicate polarizabilities
+            if n_s > 1:
+                alphas0 = alphas0.repeat(n_s)  
+            
+            # compute the scattering matrix of the scatterers
+            mat = torch.diag(1 / alphas0)
+            green = Green_function(dipole_pos, dipole_pos, parameters, freq)
+            mat = mat - green
+            W1 = torch.pinverse(mat)
+            
+            S_scat = torch.mm(torch.mm(G.t(), W1), G)
+            
+            # Compute the total scattering matrix
+            
+            S = S0 + S_scat
+            S[:N, :N] = -S[:N, :N]  
+            S[N:, N:] = -S[N:, N:]  
+            
+    else:
+        
+        # Full computation
+        ###########################################################################
+   
+        W = parameters['W_guide'].clone()
+        L = parameters['H_guide'].clone()
+    
+        if nb_scat > 0:
+    
+            # if the scatterers are represented by multiple dipoles, the dipoles
+            # corresponding to each scatterer are generated
+            if n_s > 1:
+                theta = torch.linspace(0, 2 * np.pi, n_s + 1)
+                dipole_pos = torch.zeros((n_s * nb_scat, 2))
+                for ii in range(nb_scat):
+                    R = parameters['scatRad'][ii]  # Radius of scatterers
+                    dipole_pos[n_s * ii:n_s * (ii + 1), 0] = parameters['posy'][ii] + R * torch.cos(theta[:-1])
+                    dipole_pos[n_s * ii:n_s * (ii + 1), 1] = parameters['posx'][ii] + R * torch.sin(theta[:-1])
+                alphas0 = alphas0.repeat(n_s)  # also duplicate polarizabilities
+                
+            parameters['dipole_pos'] = dipole_pos
+    
+        # waveguide modes parameters
+        nu_c = c / (2 * W)
+        kn = (2 * np.pi / c) * torch.sqrt(freq**2 - (torch.arange(1, 301) * nu_c)**2) 
+    
+        # Calculate the green function from the input to the dipoles
+        G2 = torch.sqrt(2 / W) * torch.sin(dipole_pos[:, 0].unsqueeze(1) * torch.arange(1, N + 1) * np.pi / W) * \
+             torch.exp(-1j * dipole_pos[:, 1].unsqueeze(1) * torch.conj(kn[:N]))
+        G2 = -torch.pow(-1.0, torch.arange(1, N + 1)) * G2
+        G2 = (1 / torch.sqrt(kn[:N])) * G2
+    
+        # calculate the Green functions from the dipoles to the output 
+        G1 = torch.sqrt(2 / W) * torch.sin(dipole_pos[:, 0].unsqueeze(1) * torch.arange(1, N + 1) * np.pi / W) * \
+             torch.exp(-1j * torch.abs(L - dipole_pos[:, 1].unsqueeze(1)) * torch.conj(kn[:N]))
+        G1 = -torch.pow(-1.0, torch.arange(1, N + 1)) * G1
+        G1 = (1 / torch.sqrt(kn[:N])) * G1
+    
+        # concatenate the Green functions of the scatterers
+        G = torch.cat((G2, G1), dim=1)
+        
+        # save G for later computations
+        parameters['G'] = G
+    
+        # compute the scattering matrix of the scatterers
+        S_scat = 0
+        if nb_scat > 0:
+            mat = torch.diag(1 / alphas0)
+            green = Green_function(dipole_pos, dipole_pos, parameters, freq)
+            mat = mat - green
+            W1 = torch.pinverse(mat)
+            S_scat = torch.mm(torch.mm(G.t(), W1), G)
+    
+        # Compute the scattering matrix of the waveguide without scatterers
+        S0 = torch.zeros((2 * N, 2 * N), dtype=torch.complex128)
+        G0 = torch.exp(-1j * L * torch.conj(kn[:N]))
+        t0 = torch.diag(G0)
+        S0[:N, N:2 * N] = t0
+        S0[N:2 * N, :N] = t0
+        S0 = -S0
+        
+        # save S0 for later computations 
+        parameters['S0'] = S0
+    
+        # Compute the total scattering matrix
+        S = S0 + S_scat
+        S[:N, :N] = -S[:N, :N]  
+        S[N:, N:] = -S[N:, N:]  
 
     return S
 
