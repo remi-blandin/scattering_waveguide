@@ -196,9 +196,9 @@ def calculate_loss(parameters, freq):
     Tx = S[n_port:2*n_port, :n_port]
     U, lambda1, v = torch.linalg.svd(Tx)
     R = 1-torch.mean(torch.sum(torch.abs(Tx)**2,axis=1))
-    loss = (1-lambda1[parameters['Nport']-1] )+R*(1-R)
-    # loss = R
-    loss.requires_grad_()
+    # loss = (1-lambda1[parameters['Nport']-1] )+R*(1-R)
+    loss = R
+    # loss.requires_grad_()
     
     return loss, S, R
 
@@ -209,7 +209,7 @@ def scattering_matrix(parameters, freq):
     N = parameters['Nport'].clone()
     W = parameters['W_guide'].clone()
     L = parameters['H_guide'].clone()
-    alphas0 = parameters['alphas0'].clone()
+    alphas0 = parameters['alphas0']
     nb_scat = parameters['nb_scat']
 
     if nb_scat > 0:
@@ -225,7 +225,8 @@ def scattering_matrix(parameters, freq):
                 R = parameters['scatRad'][ii]  # Radius of scatterers
                 dipole_pos[n_s * ii:n_s * (ii + 1), 0] = parameters['posy'][ii] + R * torch.cos(theta[:-1])
                 dipole_pos[n_s * ii:n_s * (ii + 1), 1] = parameters['posx'][ii] + R * torch.sin(theta[:-1])
-            alphas0 = np.repeat(alphas0.detach(),n_s) # also duplicate polarizabilities
+            # alphas0 = np.repeat(alphas0,n_s)
+            alphas0 = alphas0.repeat(n_s)  # also duplicate polarizabilities
 
     # waveguide modes parameters
     nu_c = c / (2 * W)
