@@ -16,9 +16,9 @@ parameters = {
     'n_s': torch.tensor(8),                                 # number of dipoles to model one cylinder
     'method': 'random',                                     # Optimization method (random in this case)
     'max_nb_iterations':1000,                               # max number of optimization iterations
-    'learning_rate': 0.01,                                 # learning rate for Adam optimization algorithm
+    'learning_rate': 0.001,                                 # learning rate for Adam optimization algorithm
     'maximal_loss': 0.01,                                   # optimization stops when loss is lower 
-    'use_precomputed_values': False,                         # if set to true, precomputed data are used to accelerate computations
+    'use_precomputed_values': True,                         # if set to true, precomputed data are used to accelerate computations
     }
     
 # compute the number of propagating modes
@@ -30,7 +30,7 @@ print(f"Number of propagating modes: {parameters['Nport']}")
 # polarizabilities
 alphas_metal = -1j * 6
 alphas_teflon = +1j * 0.05
-alphas_optim = +1j * 2.
+alphas_optim = +1j * 5.
 
 #%% generate scatterers polarization and position
 
@@ -38,7 +38,7 @@ alphas_optim = +1j * 2.
 nb_opt_metal = 12       # Metal scatterers to optimize
 nb_opt_dielec = 10      # Teflon scatterers to optimize
 nb_scat = nb_opt_metal + nb_opt_dielec  # Number of dipoles to be optimized (the nb_opt at the left part)
-n_optim = 50
+n_optim = 30
 
 # radius of the different scatterers types
 radius = 0.0021
@@ -61,10 +61,10 @@ parameters, scat_pos = fct.position_scatterer_random(parameters, \
 # Generate the complex medium whose polarizability is optimized
 #############################################################################
 
-parameters['alphas0'] = torch.cat((parameters['alphas0'], \
-                                   torch.full((n_optim, ), alphas_optim)))
 # parameters['alphas0'] = torch.cat((parameters['alphas0'], \
-                                   # ((torch.rand((n_optim, )) - 0.5)) * alphas_optim))
+#                                    torch.full((n_optim, ), alphas_optim)))
+parameters['alphas0'] = torch.cat((parameters['alphas0'], \
+                                   ((torch.rand((n_optim, )) - 0.)) * alphas_optim))
     
 parameters['scatRad'] = torch.cat((parameters['scatRad'], \
                                        torch.full((n_optim,), radius)))
