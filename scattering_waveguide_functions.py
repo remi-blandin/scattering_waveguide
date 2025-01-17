@@ -397,8 +397,6 @@ def plot_optimization_progress(parameters, record, S):
     # plot the evolution of the loss over the iterations
     ax2 = plt.subplot(2, 2, 3)
     ax2.plot(record)
-    # if len(record) > 0:
-        # ax2.set_ylim((0, max(record)))
     
     # plot the scattering matrix
     ax3 = plt.subplot(2, 2, 4)
