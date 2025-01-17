@@ -6,6 +6,37 @@ import csv
 import skrf as rf
 import matplotlib.pyplot as plt
 
+#%% Define functions
+##############################################################################
+
+#%% To plot and compare the matrices
+
+def plot_compare_scat_mat(S, S_HFSS, S_diff):
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3)
+    
+    im1 = ax1.imshow(np.abs(S.numpy()))
+    ax1.set_title('Dipole model')
+    plt.colorbar(im1, ax=ax1)
+    
+    im2 = ax2.imshow(np.abs(S_HFSS))
+    ax2.set_title('HFSS')
+    plt.colorbar(im2, ax=ax2)
+    
+    im3 = ax3.imshow(np.abs(S_diff))
+    ax3.set_title('Difference')
+    plt.colorbar(im3, ax=ax3)
+    
+    plt.show()
+    
+#%% Compare matrices
+
+def compare_matrices(S_HFSS, S):
+    S_diff = np.abs(S_HFSS) - np.abs(S.numpy())
+    record[itre, itim] = np.sum(np.abs(S_diff))
+    return S_diff
+
+#%% Define parameters
+
 parameters = {
     'W_guide': torch.tensor(0.1),                           # Waveguide width
     'H_guide': torch.tensor(0.4),                           # Waveguide length
@@ -74,48 +105,65 @@ fct.plot_optimization_progress(parameters, loss, S.detach())
 
 #%% Load the scattering matrix simulated by HFSS
 
-file_name_HFSS_scat_mat = 'scat_mat_HFSS.s8p'
+file_name_HFSS_scat_mat = 'scat_mat_HFSS_8mm.s8p'
 network = rf.Network(file_name_HFSS_scat_mat)
 
-freas_HFSS = network.f
-index = np.argmin(np.abs(freas_HFSS - freq.numpy()))
+freqs_HFSS = network.f
+index = np.argmin(np.abs(freqs_HFSS - freq.numpy()))
 S_HFSS = network.s[index, :, :]
 
+#%% optimize polarizability
 
-alpha_var = torch.arange(-10., -1., 1.) * 1j
-nb_alpha = len(alpha_var)
-record = torch.zeros(nb_alpha)
+show_matrices_at_each_iteration = False
 
-for it, al in enumerate(alpha_var):
-    
-    # vary the polarizability
-    parameters['alphas0'] = torch.full((nb_scat,), al, dtype=torch.complex64)
-    
-    # compute scattering matrix
-    loss,S,R = fct.calculate_loss(parameters, freq)
-    
-    # compute difference
-    S_diff = S_HFSS - S.numpy()
-    record[it] = np.sum(np.abs(S_diff))
+alpha_var_re = torch.arange(-10, 10., 0.6)
+nb_alpha_re = len(alpha_var_re)
 
-    # plot the scattering matrices at the selected frequency freq
-    fig, (ax1, ax2, ax3) = plt.subplots(1, 3)
+alpha_var_im = torch.arange(-10., 10., 0.6)
+nb_alpha_im = len(alpha_var_im)
+
+record = torch.zeros(nb_alpha_re, nb_alpha_im)
+
+for itre, al_re in enumerate(alpha_var_re):
+    for itim, al_im in enumerate(alpha_var_im):
+        
+        # vary the polarizability
+        parameters['alphas0'] = torch.full((nb_scat,), al_re + 1j * al_im, \
+                                           dtype=torch.complex64)
+        
+        # compute scattering matrix
+        loss,S,R = fct.calculate_loss(parameters, freq)
+        
+        # compute difference
+        S_diff = compare_matrices(S_HFSS, S)
     
-    im1 = ax1.imshow(np.abs(S.numpy()))
-    ax1.set_title('Dipole model')
-    plt.colorbar(im1, ax=ax1)
-    
-    im2 = ax2.imshow(np.abs(S_HFSS))
-    ax2.set_title('HFSS')
-    plt.colorbar(im2, ax=ax2)
-    
-    im3 = ax3.imshow(np.abs(S_diff))
-    ax3.set_title('Difference')
-    plt.colorbar(im3, ax=ax3)
-    
-    plt.show()
-    
+        # plot the scattering matrices at the selected frequency freq
+        if show_matrices_at_each_iteration:
+            plot_compare_scat_mat(S, S_HFSS, S_diff)
+            
 # plot difference with respect to polarizability
-plt.plot(np.imag(alpha_var), record)
+x_min = alpha_var_re.min().item()
+x_max = alpha_var_re.max().item()
+y_min = alpha_var_im.min().item()
+y_max = alpha_var_im.max().item()
+plt.imshow(np.log(record.numpy()), extent=[x_min, x_max, y_min, y_max], origin='lower')
+plt.xlabel('Real part')
+plt.ylabel('Imaginary part')
 plt.show()
+            
+# localize the best configuration
+min_value, min_index = torch.min(record.flatten(), 0)
+min_index_2d = divmod(min_index.item(), record.size(1))
+best_alpha = alpha_var_re[min_index_2d[0]] + 1j * alpha_var_im[min_index_2d[1]]
+print(f'Best alpha = {torch.real(best_alpha).item():.2f} + j {torch.imag(best_alpha).item():.2f}')
+
+# compute the scattering matrix of the best alpha
+parameters['alphas0'] = torch.full((nb_scat,), best_alpha, dtype=torch.complex64)
+loss,S,R = fct.calculate_loss(parameters, freq)
+
+# plot scattering matrix of the best alpha
+S_diff = compare_matrices(S_HFSS, S)
+plot_compare_scat_mat(S, S_HFSS, S_diff)
+    
+
 
