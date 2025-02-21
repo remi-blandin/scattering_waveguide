@@ -98,7 +98,7 @@ parameters['scatRad'] = torch.full((nb_scat,), radius)
 
 #%% Plot scattering matrix 
 
-freq = torch.tensor(7.0e9,dtype=torch.cfloat)
+freq = torch.tensor(6.0e9,dtype=torch.cfloat)
 loss,S,R = fct.calculate_loss(parameters, freq)
 fct.plot_optimization_progress(parameters, loss, S.detach())
 

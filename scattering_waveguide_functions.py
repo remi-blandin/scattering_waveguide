@@ -353,20 +353,32 @@ def plot_scatterers(parameters, ax):
     
     ax.set_aspect('equal')
     
-    scat_color = np.round(np.imag(parameters['alphas0'].detach()) * 10.)
-    scat_color = scat_color - min(scat_color)
-    scat_color =  scat_color/max(scat_color)
+    # compute the color indexes
+    scat_color = np.imag(parameters['alphas0'].detach())
     
+    # Create a colormap
+    vmin = min(scat_color)
+    vmax = max(scat_color)
+    norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
+    cmap = plt.cm.winter  
+    
+    # plot the scatterers
     n_scatt = len(parameters['posx'])
     for s in range(0, n_scatt):
         circ = plt.Circle((parameters['posx'][s], parameters['posy'][s]),  \
-                          parameters['scatRad'][s], color=mcolors.to_rgb((scat_color[s].item(), 0, 0)))
+                          parameters['scatRad'][s], 
+                          color=cmap(norm(scat_color[s].item())))
         ax.add_patch(circ)
         
     # draw the waveguide contours 
     rect = plt.Rectangle((0., 0.), parameters['H_guide'], parameters['W_guide'],\
                              linewidth=1, edgecolor='black', facecolor='none')
     ax.add_patch(rect)
+    
+    # Create the colorbar
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    cbar = plt.colorbar(sm, ax=ax)
+    cbar.set_label('Polarizability')  
         
     x_min = min(0., min(parameters['posx']))
     x_max = max(parameters['H_guide'], max(parameters['posx']))
@@ -375,8 +387,6 @@ def plot_scatterers(parameters, ax):
     y_min = min(0., min(parameters['posy']))
     y_max = max(parameters['W_guide'], max(parameters['posy']))
     ax.set_ylim((y_min, y_max))
-    
-    # print(f'x_min = {x_min} x_max = {x_max} y_min = {y_min} y_max = {y_max}')
     
 def plot_scatterers_config(parameters):
     fig = plt.figure()
